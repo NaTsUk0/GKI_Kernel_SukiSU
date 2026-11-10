@@ -5178,7 +5178,7 @@ CONFIG_CIFS_XATTR=y
                 # below. 'full' means a single-threaded, RAM-heavy link
                 # step (can need 16GB+ and much longer wall-clock time),
                 # so it's opt-in via --lto-mode full rather than default.
-                return (f"LTO={self.config.lto_mode} BUILD_CONFIG=common/build.config.gki.aarch64 "
+                return (f"HERMETIC_TOOLCHAIN=0 LTO={self.config.lto_mode} BUILD_CONFIG=common/build.config.gki.aarch64 "
                         f"build/build.sh CC=\"/usr/bin/ccache clang\"")
             # Building //common:kernel_aarch64/Image directly (instead of
             # the full //common:kernel_aarch64_dist target) matches
