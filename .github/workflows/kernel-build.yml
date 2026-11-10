@@ -164,7 +164,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Maximize build space
         # v5.1: v5 tried to remove the 'powershell' package, which newer
