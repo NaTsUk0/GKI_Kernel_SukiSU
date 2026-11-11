@@ -4150,8 +4150,26 @@ CONFIG_CIFS_XATTR=y
                     f.write(content)
                 changed = True
 
-        with open(task_mmu, "r") as f:
+        with open(task_mmu, "r", encoding="utf-8") as f:
             content = f.read()
+
+        # SUSFS can introduce VMA_PAD_START on old kernels that do not define it.
+        if (
+            "VMA_PAD_START(" in content
+            and "#define VMA_PAD_START" not in content
+            and "#include <linux/pgsize_migration" not in content
+        ):
+            fallback = (
+                "#ifndef VMA_PAD_START\n"
+                "#define VMA_PAD_START(vma) ((vma)->vm_end)\n"
+                "#endif\n"
+            )
+            first_line, separator, remainder = content.partition("\n")
+            content = first_line + separator + fallback + remainder
+            with open(task_mmu, "w", encoding="utf-8", newline="\n") as f:
+                f.write(content)
+            changed = True
+
         if "struct dentry *dentry;\n" in content:
             content = content.replace("struct dentry *dentry;\n", "struct dentry *dentry = NULL;\n")
             with open(task_mmu, "w") as f:
