@@ -4180,16 +4180,17 @@ CONFIG_CIFS_XATTR=y
                     "" if changed else "not needed on this branch")
 
     def apply_btf_fixes(self):
-        """Ensure android12-5.10 emits xdp_buff into vmlinux BTF.
+        """Apply Android 12 / 5.10 BTF compatibility backports.
 
-        net/core/filter.c references struct xdp_buff from a BTF ID list,
-        but this legacy branch does not otherwise guarantee that the type is
-        emitted. resolve_btfids treats the missing type as fatal at the final
-        vmlinux link step, so patch it before starting the expensive build.
+        Keep xdp_buff reachable for BTF generation, then backport the stable
+        kernel behaviour that records a zero BTF ID (with a warning) when a
+        referenced type is still absent.  Older resolve_btfids versions abort
+        the entire vmlinux link instead.
         """
         family = f"{self.config.android_version}-{self.config.kernel_version}"
         if family != "android12-5.10":
             self._mark("btf_xdp_buff", "skipped", "not required on this branch")
+            self._mark("btf_resolve_missing", "skipped", "not required on this branch")
             return
 
         common_dir = self.work_dir / "common"
@@ -4202,17 +4203,43 @@ CONFIG_CIFS_XATTR=y
         source = xdp_source.read_text(encoding="utf-8")
         if "BTF_TYPE_EMIT(struct xdp_buff);" in source:
             self._mark("btf_xdp_buff", "skipped", "already present upstream")
+        else:
+            patch_file = (Path(__file__).parent / "patches" /
+                          "btf_emit_xdp_buff_android12-5.10.patch")
+            ok, detail = self._apply_patch_with_dry_run(
+                patch_file, common_dir, fuzz_levels=(0,)
+            )
+            if not ok:
+                self._mark("btf_xdp_buff", "failed", detail)
+                raise RuntimeError(f"BTF xdp_buff fix failed: {detail}")
+            self._mark("btf_xdp_buff", "applied", detail)
+
+        resolver_source = common_dir / "tools/bpf/resolve_btfids/main.c"
+        if not resolver_source.exists():
+            detail = "tools/bpf/resolve_btfids/main.c not found"
+            self._mark("btf_resolve_missing", "failed", detail)
+            raise RuntimeError(f"BTF resolve_btfids fix failed: {detail}")
+
+        resolver = resolver_source.read_text(encoding="utf-8")
+        warning_line = 'pr_err("WARN: resolve_btfids: unresolved symbol %s\n", id->name);'
+        fatal_line = 'pr_err("FAILED unresolved symbol %s\n", id->name);'
+        if warning_line in resolver:
+            self._mark("btf_resolve_missing", "skipped", "already present upstream")
             return
+        if fatal_line not in resolver:
+            detail = "unrecognised resolve_btfids missing-symbol block"
+            self._mark("btf_resolve_missing", "failed", detail)
+            raise RuntimeError(f"BTF resolve_btfids fix failed: {detail}")
 
         patch_file = (Path(__file__).parent / "patches" /
-                      "btf_emit_xdp_buff_android12-5.10.patch")
+                      "resolve_btfids_allow_missing_android12-5.10.patch")
         ok, detail = self._apply_patch_with_dry_run(
             patch_file, common_dir, fuzz_levels=(0,)
         )
         if not ok:
-            self._mark("btf_xdp_buff", "failed", detail)
-            raise RuntimeError(f"BTF xdp_buff fix failed: {detail}")
-        self._mark("btf_xdp_buff", "applied", detail)
+            self._mark("btf_resolve_missing", "failed", detail)
+            raise RuntimeError(f"BTF resolve_btfids fix failed: {detail}")
+        self._mark("btf_resolve_missing", "applied", detail)
 
     def _fix_base_c_header(self):
         base_c = self.work_dir / "common/fs/proc/base.c"
