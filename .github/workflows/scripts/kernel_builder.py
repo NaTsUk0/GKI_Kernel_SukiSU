@@ -4179,6 +4179,41 @@ CONFIG_CIFS_XATTR=y
         self._mark("task_mmu_fixes", "applied" if changed else "skipped",
                     "" if changed else "not needed on this branch")
 
+    def apply_btf_fixes(self):
+        """Ensure android12-5.10 emits xdp_buff into vmlinux BTF.
+
+        net/core/filter.c references struct xdp_buff from a BTF ID list,
+        but this legacy branch does not otherwise guarantee that the type is
+        emitted. resolve_btfids treats the missing type as fatal at the final
+        vmlinux link step, so patch it before starting the expensive build.
+        """
+        family = f"{self.config.android_version}-{self.config.kernel_version}"
+        if family != "android12-5.10":
+            self._mark("btf_xdp_buff", "skipped", "not required on this branch")
+            return
+
+        common_dir = self.work_dir / "common"
+        xdp_source = common_dir / "net/core/xdp.c"
+        if not xdp_source.exists():
+            detail = "net/core/xdp.c not found"
+            self._mark("btf_xdp_buff", "failed", detail)
+            raise RuntimeError(f"BTF xdp_buff fix failed: {detail}")
+
+        source = xdp_source.read_text(encoding="utf-8")
+        if "BTF_TYPE_EMIT(struct xdp_buff);" in source:
+            self._mark("btf_xdp_buff", "skipped", "already present upstream")
+            return
+
+        patch_file = (Path(__file__).parent / "patches" /
+                      "btf_emit_xdp_buff_android12-5.10.patch")
+        ok, detail = self._apply_patch_with_dry_run(
+            patch_file, common_dir, fuzz_levels=(0,)
+        )
+        if not ok:
+            self._mark("btf_xdp_buff", "failed", detail)
+            raise RuntimeError(f"BTF xdp_buff fix failed: {detail}")
+        self._mark("btf_xdp_buff", "applied", detail)
+
     def _fix_base_c_header(self):
         base_c = self.work_dir / "common/fs/proc/base.c"
         if not base_c.exists():
@@ -6198,6 +6233,7 @@ CONFIG_CIFS_XATTR=y
             self.apply_sukisu_patches()
             self.apply_zram_patches()
             self.apply_task_mmu_fixes()
+            self.apply_btf_fixes()
             # Applied last, deliberately after SUSFS/SukiSU: Droidspaces'
             # kABI patch and SUSFS both potentially touch the same
             # ANDROID_KABI_RESERVE slots in include/linux/sched.h. If
