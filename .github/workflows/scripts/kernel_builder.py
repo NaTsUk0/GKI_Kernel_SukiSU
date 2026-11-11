@@ -4221,8 +4221,8 @@ CONFIG_CIFS_XATTR=y
             raise RuntimeError(f"BTF resolve_btfids fix failed: {detail}")
 
         resolver = resolver_source.read_text(encoding="utf-8")
-        warning_line = 'pr_err("WARN: resolve_btfids: unresolved symbol %s\n", id->name);'
-        fatal_line = 'pr_err("FAILED unresolved symbol %s\n", id->name);'
+        warning_line = 'pr_err("WARN: resolve_btfids: unresolved symbol %s\\n", id->name);'
+        fatal_line = 'pr_err("FAILED unresolved symbol %s\\n", id->name);'
         if warning_line in resolver:
             self._mark("btf_resolve_missing", "skipped", "already present upstream")
             return
