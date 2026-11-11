@@ -201,30 +201,73 @@ jobs:
             build-essential zlib1g-dev bc bison flex libssl-dev libelf-dev rsync
           )
 
-          for attempt in 1 2 3 4; do
-            echo "::group::APT attempt ${attempt}/4"
-            if sudo apt-get update -o Acquire::Retries=2 &&
-               sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Acquire::Retries=2 "${packages[@]}"; then
-              echo "::endgroup::"
-              break
+          missing_packages=()
+          for package in "${packages[@]}"; do
+            if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+              missing_packages+=("$package")
             fi
-            echo "::endgroup::"
-
-            if [ "$attempt" -eq 4 ]; then
-              echo "::error::APT failed after 4 attempts."
-              exit 1
-            fi
-
-            echo "::warning::APT failed; refreshing DNS before retry."
-            sudo systemctl restart systemd-resolved 2>/dev/null || true
-            sudo resolvectl flush-caches 2>/dev/null || true
-            if [ -f /etc/apt/apt-mirrors.txt ]; then
-              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
-            fi
-            sleep $((attempt * 20))
           done
 
-          python -m pip install --disable-pip-version-check PyYAML
+          if [ "${#missing_packages[@]}" -eq 0 ]; then
+            echo "::notice::All build dependencies are already installed; skipping APT."
+          else
+            echo "Missing packages: ${missing_packages[*]}"
+            . /etc/os-release
+            suite="${VERSION_CODENAME:-noble}"
+            mirrors=(
+              "http://azure.archive.ubuntu.com/ubuntu"
+              "http://archive.ubuntu.com/ubuntu"
+              "https://ftp.osuosl.org/pub/ubuntu"
+            )
+            installed=false
+
+            for mirror in "${mirrors[@]}"; do
+              mirror_host="${mirror#*://}"
+              mirror_host="${mirror_host%%/*}"
+              echo "::group::Trying Ubuntu mirror: $mirror"
+
+              if ! timeout 12 getent ahostsv4 "$mirror_host" >/dev/null; then
+                echo "::warning::DNS could not resolve $mirror_host; trying the next mirror."
+                echo "::endgroup::"
+                continue
+              fi
+
+              sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<EOF
+          Types: deb
+          URIs: $mirror
+          Suites: $suite $suite-updates $suite-backports $suite-security
+          Components: main restricted universe multiverse
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+
+              if timeout 90 sudo apt-get update \
+                   -o Acquire::Retries=0 \
+                   -o Acquire::http::Timeout=15 \
+                   -o Acquire::https::Timeout=15 &&
+                 timeout 180 sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                   --no-install-recommends \
+                   -o Acquire::Retries=0 \
+                   -o Acquire::http::Timeout=15 \
+                   -o Acquire::https::Timeout=15 \
+                   "${missing_packages[@]}"; then
+                installed=true
+                echo "::endgroup::"
+                break
+              fi
+
+              echo "::warning::Mirror $mirror failed; trying the next mirror."
+              echo "::endgroup::"
+            done
+
+            if [ "$installed" != true ]; then
+              echo "::error::Unable to install missing packages from any configured Ubuntu mirror."
+              exit 1
+            fi
+          fi
+
+          if ! python -c 'import yaml' 2>/dev/null; then
+            python -m pip install --disable-pip-version-check --retries 3 --timeout 20 PyYAML
+          fi
 
       - name: Setup AVB signing key
         env:
