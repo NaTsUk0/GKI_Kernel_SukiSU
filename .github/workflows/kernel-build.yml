@@ -193,10 +193,38 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
+        shell: bash
         run: |
-          sudo apt update && sudo apt upgrade -y
-          sudo apt install -y ccache python3 git curl wget zip unzip xz-utils openssl pixz build-essential zlib1g-dev bc bison flex libssl-dev libelf-dev rsync
-          pip install PyYAML
+          set -euo pipefail
+          packages=(
+            ccache python3 git curl wget zip unzip xz-utils openssl pixz
+            build-essential zlib1g-dev bc bison flex libssl-dev libelf-dev rsync
+          )
+
+          for attempt in 1 2 3 4; do
+            echo "::group::APT attempt ${attempt}/4"
+            if sudo apt-get update -o Acquire::Retries=2 &&
+               sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends -o Acquire::Retries=2 "${packages[@]}"; then
+              echo "::endgroup::"
+              break
+            fi
+            echo "::endgroup::"
+
+            if [ "$attempt" -eq 4 ]; then
+              echo "::error::APT failed after 4 attempts."
+              exit 1
+            fi
+
+            echo "::warning::APT failed; refreshing DNS before retry."
+            sudo systemctl restart systemd-resolved 2>/dev/null || true
+            sudo resolvectl flush-caches 2>/dev/null || true
+            if [ -f /etc/apt/apt-mirrors.txt ]; then
+              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+            fi
+            sleep $((attempt * 20))
+          done
+
+          python -m pip install --disable-pip-version-check PyYAML
 
       - name: Setup AVB signing key
         env:
