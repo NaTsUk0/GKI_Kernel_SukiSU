@@ -346,23 +346,13 @@ CONFIG_NETFILTER_XT_CONNMARK=y
 # support for Samba/Windows network shares) ===
 CONFIG_CIFS=y
 
-# === BTF / eBPF / FUSE-BPF (debugging + eBPF tooling, matches
-# WildKernels' "BTF / eBPF / FUSE-BPF" feature) ===
-# CONFIG_DEBUG_INFO_BTF is already on by default in stock gki_defconfig
-# (Google added it years ago for libbpf-tools support) - listed here
-# explicitly anyway so it's documented and pinned rather than relying
-# on upstream's default never changing. CONFIG_BPF_EVENTS is also
-# very likely already on by default (standard Android BPF tracing
-# infra - netd, iorap, etc. depend on it) but costs nothing to pin
-# explicitly too.
+# === BTF / eBPF / FUSE-BPF ===
+# BPF events stay available on every branch. BTF is selected separately
+# in configure_kernel(): android12-5.10 must disable its very large BTF
+# payload so the signed boot image fits the device's 64 MiB boot partition;
+# newer branches keep it enabled for libbpf tooling.
 #
-# NOTE: CONFIG_FUSE_BPF is deliberately NOT in this unconditional
-# template - it only exists from android13 onwards (fs/fuse/backing.c
-# does not exist at all on android12-5.10), and writing an undefined
-# Kconfig symbol into gki_defconfig is silently dropped with no error.
-# It's written conditionally in configure_kernel() instead, and paired
-# with a matching conditional check in _verify_expected_objects().
-CONFIG_DEBUG_INFO_BTF=y
+# CONFIG_FUSE_BPF is also conditional because it only exists on android13+.
 CONFIG_BPF_EVENTS=y
 """
 
@@ -4576,6 +4566,15 @@ CONFIG_CIFS_XATTR=y
 
         with open(config_file, "a") as f:
             f.write(self.KERNEL_CONFIG_TEMPLATE)
+            family = f"{self.config.android_version}-{self.config.kernel_version}"
+            if family == "android12-5.10":
+                logger.info(
+                    "Disabling CONFIG_DEBUG_INFO_BTF on android12-5.10 so "
+                    "the signed boot image fits the 64 MiB boot partition"
+                )
+                f.write("# CONFIG_DEBUG_INFO_BTF is not set\n")
+            else:
+                f.write("CONFIG_DEBUG_INFO_BTF=y\n")
             if self.config.kernel_version != "6.6":
                 f.write("CONFIG_KSU_SUSFS_SUS_PATH=y\n")
             else:
@@ -5550,9 +5549,10 @@ CONFIG_CIFS_XATTR=y
             ("CONFIG_NET_SCH_CAKE", False),
             ("CONFIG_CIFS", False),
             ("CONFIG_TMPFS_XATTR", False),
-            ("CONFIG_DEBUG_INFO_BTF", False),
             ("CONFIG_BPF_EVENTS", False),
         ]
+        if f"{self.config.android_version}-{self.config.kernel_version}" != "android12-5.10":
+            symbols.append(("CONFIG_DEBUG_INFO_BTF", False))
         if self._susfs_defines_priority_uid_filter():
             symbols.append(("CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER", False))
         if self.config.use_kpm:
