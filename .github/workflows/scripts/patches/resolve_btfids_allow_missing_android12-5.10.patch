@@ -1,10 +1,14 @@
 --- a/tools/bpf/resolve_btfids/main.c
 +++ b/tools/bpf/resolve_btfids/main.c
-@@ -711,6 +711,5 @@ static int symbols_patch(struct object *obj)
- 		if (!id->id) {
--			pr_err("FAILED unresolved symbol %s\n", id->name);
--			return -EINVAL;
-+			pr_err("WARN: resolve_btfids: unresolved symbol %s\n", id->name);
- 		}
+@@ -552,10 +552,9 @@ static int id_patch(struct object *obj, struct btf_id *id)
+ 	int i;
  
- 		if (id->addr) {
+ 	if (!id->id) {
+-		pr_err("FAILED unresolved symbol %s\n", id->name);
+-		return -EINVAL;
++		pr_err("WARN: resolve_btfids: unresolved symbol %s\n", id->name);
+ 	}
+ 
+ 	for (i = 0; i < id->addr_cnt; i++) {
+ 		unsigned long addr = id->addr[i];
+ 		unsigned long idx = addr - obj->efile.idlist_addr;
