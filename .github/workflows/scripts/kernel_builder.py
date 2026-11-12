@@ -6096,7 +6096,39 @@ CONFIG_CIFS_XATTR=y
         else:
             image_source = self.work_dir / "bazel-bin/common/kernel_aarch64"
 
-        for image_name in ["Image"]:
+        image_names = ["Image"]
+        if self.config.android_version == "android12":
+            # Android 12 certified GKI boot images carry an LZ4-compressed
+            # kernel.  Recompress here, after patch_kpm_image() has replaced
+            # the raw Image, so the boot image contains KernelPatch as well.
+            # Packing the raw Image can exceed the 64 MiB boot partition when
+            # BTF is enabled (5.10.198 is about 163 MiB uncompressed).
+            image = image_source / "Image"
+            image_lz4 = image_source / "Image.lz4"
+            lz4 = self.toolchain_dir / "linux-x86/bin/lz4"
+            if not image.exists():
+                raise RuntimeError(
+                    f"Cannot prepare Android 12 boot image: {image} is missing."
+                )
+            if not lz4.exists():
+                raise RuntimeError(
+                    f"Cannot prepare Android 12 boot image: {lz4} is missing."
+                )
+            compressed = self._run_cmd(
+                f"{lz4} -f -l -12 --favor-decSpeed {image} {image_lz4}",
+                check=False,
+            )
+            if compressed.returncode != 0 or not image_lz4.exists():
+                raise RuntimeError(
+                    "Failed to LZ4-compress the KPM-patched Android 12 Image."
+                )
+            logger.info(
+                f"Android 12 kernel compressed for boot.img: "
+                f"{image.stat().st_size} -> {image_lz4.stat().st_size} bytes"
+            )
+            image_names.append("Image.lz4")
+
+        for image_name in image_names:
             src = image_source / image_name
             if src.exists():
                 self._run_cmd(f"cp {src} {bootimgs_dir}/ && cp {src} {self.work_dir}/", check=False)
@@ -6151,9 +6183,10 @@ CONFIG_CIFS_XATTR=y
     def _create_boot_image_variants(self, bootimgs_dir: Path, artifacts: list, has_ramdisk: bool = False):
         self._chdir(bootimgs_dir)
 
-        # Only the plain boot.img is packaged/uploaded - boot-gz.img and
-        # boot-lz4.img variants are intentionally not produced.
-        for kernel_file, output_file in [("Image", "boot.img")]:
+        # Android 12 certified GKI boot images use a legacy-LZ4 kernel. Other
+        # branches keep the existing raw-Image packaging behaviour.
+        kernel_file = "Image.lz4" if self.config.android_version == "android12" else "Image"
+        for kernel_file, output_file in [(kernel_file, "boot.img")]:
             kernel_path = bootimgs_dir / kernel_file
             if not kernel_path.exists():
                 logger.error(
